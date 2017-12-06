@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+
+# Seamus Johnston, 2017-12-03
+# https://seamusjohnston.com
+
+# Print usage if no args or help asked
+read -r -d '' USAGE << 'EOF'
+Usage: word [options] [primary modifiers] <word|phrase> \
+       [primary|secondary modifiers <word|phrase|number>]
+
+    -v[vv]                           Verbose modes.
+    -h, --help                       Print this help.
+
+Primary modifier examples:
+   meaning          "word meaning feeling tired"
+   sounds like      "word which sounds like tung"
+                    "word sounding like doe but spelled differently"
+   rhymes with      "word rhymes with culminate"
+   comes after      "word comes after sea and that rhymes with norse"
+   spelled like     "word spelled like 'cens?r'"
+   defined          "word nostrum defined" 
+   pronunciation    "word pronunciation of otolaryngology"
+   no ... exactly   "word meaning of life"              == ml=of+life
+                    "word no meaning of life exactly"   == ml=meaning+of+life
+                    "word "meaning of life""            == ml=meaning+of+life
+Secondary modifiers:
+   max              "word like beautiful max 7"         (default is 20)
+   about            "word meaning refuse about trash"   (max is 5 nouns)
+                    "word meaning refuse about negotiation contracts"
+
+Word tries to guess your intent from human readable language.
+If it messes up, use quotes. Also, read <<CONTRIBUTING.md>> and open an issue,
+so I* can fix it for the next person. :)                *Seamus Johnston
+EOF
+if [[ $# -eq 0 || $1 =~ (--help)|(-h) ]]; then echo "$USAGE"; exit 1; fi
+
+# Turn on verbose if flagged
+case $1 in
+    -v)   VERBOSE=1 ; shift ;;
+    -vv)  VERBOSE=2 ; shift ;;
+    -vvv) VERBOSE=3 ; shift ;;
+esac
+
+# Vars for creating the curl request
+API="datamuse"
+MAX=10
+PARAMS=("sl" "sp" "rel_jja" "rel_jjb" "rel_syn" "rel_trg" "rel_ant" "rel_spc" "rel_gen" "rel_com" "rel_par" "rel_bga" "rel_bgb" "rel_rhy" "rel_nry" "rel_hom" "rel_cns" "lc" "rc")
+GLOSS=("sounds like" "are spelled like" "are used with the adjective" "are used with the noun" "are synonyms of" "are triggered by" "are antonyms of" "are a more general word for" "are a specific kind of" "are the parts of" "describe things made with" "usually follow" "usually preceed" "are perfect rhymes of" "are approximate rhymes of" "are homophones of" "have the same consonants as" "often follow" "often come before")
+
+# Rhymes is hard to spell
+is_rhymes() {
+    rhymes=("rhymes" "rhytms" "rhytems" "ryhms" "rhyms" "rhymnes" "ryhmes" "rhimes" "rymes" "rhtyms" "ryhtyms" "rhyemes" "rhymmes" "rymhs" "rhmes" "rhyms" "rhyhms" "rhytams" "ryphmes")
+    for r in ${rhymes[@]}; do
+        if [[ $1 = $r ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Pronounced is also hard to spell
+is_pronounced() {
+    pronounced=("pronounced" "pronunciation" "pronounsed" "pronouced" "pronouned" "pronounciated" "prenounced" "prounouced" "pernounced" "purnounced" "pronoused" "pronuced" "pronunced" "pronnounced" "pronanced" "prononced" "prounounced" "prononsed" "prononuced" "pernunciation" "prononciation" "prounciation" "pronouciation" "pronounciated" "pronounciation" "pronanciation" "prononcation" "pernounciation" "prononceation" "prenunciation" "prononseation" "prounouciation" "pronuniation" "pronunication" "prenounciation" "pronuntiation" "pronuncition" "pronociation" "prenunsiation" "pronounsation" "pronounceation" "pronounication" "pronauciation" "pronounciacion" "pronounsiation")
+    for p in ${pronounced[@]}; do
+        if [[ $1 = $p ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Deliniate the end of a phrase
+stop_word() {
+    stop_words=("and" "no" "meaning" "means" "max" "only")
+    for s in ${stop_words[@]}; do
+        if [[ $1 = $s ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Deal first with the metadata flags
+ case $# in
+    2) if [[ $2 =~ defin(ed)|(ition) ]]; then
+           sp="$1"; API="owlbot"; shift 2
+       elif is_pronounced $2; then
+           sp="$1"; md="r"; shift 2
+       fi ;;
+    3) if [[ "$1 $2" =~ defintion\ (of)|(for) ]]; then
+           sp="$3"; API="owlbot"; shift 3
+       elif [[ "$2 $3" = "means what" ]]; then
+           sp="$1"; API="owlbot"; shift 3
+       elif [[ $2 =~ (of)|(for) ]] && is_pronounced $1; then
+           sp="$3"; md="r"; shift 3
+       fi ;;
+    4) if [[ "$2 $3 $4" = "is said how" ]]; then
+          sp="$3"; md="r"; shift 3
+       fi ;;
+esac
+
+# Parse the cmdln args from left to right
+while [[ $# -gt 0 ]]; do
+    # If ./word is parsing a phrase wrong, we can
+    # "quote" it with ./word no <phrase> exactly
+    if [[ $1 = "no" && $# -gt 1 ]]; then
+        shift
+        while [[ $1 != "exactly" && $# -gt 0 ]]; do
+            ml+=("$1")
+            shift
+        done
+        if [[ $1 = "exactly" ]]; then shift; fi
+
+    elif [[ $1 =~ sound(s)|(ing) && $2 = "like" ]]; then
+        # Disambiguate homonyms from spelling variants
+        if [[ $4 =~ (but)|(except) ]] && [[ $5 = "spelled" ]] && \
+           [[ $6 =~ different(ly)* ]]; then
+            rel_hom="$3"
+            shift 6
+        else
+            sl="$3"
+            shift 3
+        fi
+    elif [[ $1 =~ spell(ed|ing) ]]; then
+        if [[ $2 = "like" ]]; then shift; fi
+        echo "$1"
+        sp="$2"
+        shift 2
+
+    elif [[ $1 = "comes" && $# -gt 2 ]]; then
+        if [[ $2 = "after" ]]; then
+            lc="$3"
+        elif [[ $2 = "before" ]]; then
+            rc="$3"
+        fi
+        shift 3
+    elif [[ $1 = "follows" ]]; then
+        lc="$2"
+        shift 2
+    elif [[ $1 = "preceeds" ]]; then
+        rc="$2"
+        shift 2
+
+#    elif [[ $1 = "means" || $1 = "meaning" || $1 = "like" ]]; then
+#        shift
+
+    # Discover the topic of our query
+#    elif [[ $1 = "about" ]]; then
+#        shift
+#        i=5
+#        while [[ $# -gt 0 && $i -gt 0 ]] && ! stop_word $1; do
+#            
+#        done
+
+    # How many results to return max 1000
+
+
+    # Remove filler words if they weren't parsed out above
+    elif [[ $1 = "that" || $1 = "which" ]]; then
+        shift
+    elif [[ $1 = "and" ]]; then
+        shift
+    elif [[ $1 = "like" || $1 = "is" ]]; then
+        shift
+
+    # Put this near the bottom because it is O(n^2)
+    elif [[ $# -gt 2 && $2 = "with" ]] && is_rhymes $1; then
+        shift 2
+        rel_rhy="$1"
+        shift
+
+    # Add anything not otherwise parsable to reverse dictionary query
+    else
+        ml+=("$1")
+        shift
+    fi
+done # while [[ $# -gt 0 ]]
+
+# Build the curl request
+CURL_REQ=("curl" "-sG")
+
+if [[ $API = "datamuse" ]]; then
+    if [[ ${#ml[@]} -gt 0 ]]; then
+        CURL_REQ+=(--data-urlencode "'ml=${ml[@]}'")
+        ASKED+=("have a meaning like '${ml[@]}'")
+    fi
+    for i in ${!PARAMS[@]}; do
+        if [[ -n ${!PARAMS[i]} ]]; then
+            CURL_REQ+=(--data-urlencode "${PARAMS[i]}=${!PARAMS[i]}")
+            ASKED+=("and ${GLOSS[i]} '${!PARAMS[i]}'")
+        fi
+    done
+    CURL_REQ+=(--data-urlencode "max=$MAX" "https://api.datamuse.com/words")
+elif [[ $API = "owlbot" ]]; then
+    CURL_REQ="https://owlbot.info/api/v2/dictionary/$(echo "$sp" | sed -E 's/[^a-Z-]*//g')"
+fi
+
+# Plain english description of our query
+if [[ $VERBOSE -gt 0 ]]; then
+    ASKED="You asked for words which $(echo "${ASKED[@]}" | sed -E 's/^and //')."
+    echo "$ASKED"
+fi
+
+# What we are going to ask the remote server
+if [[ $VERBOSE -gt 1 ]]; then
+    echo "I ran ${CURL_REQ[@]}"
+fi
+
+# "${CURL_REQ[@]}" | jq
+
+
+
+#curl -sG --data-urlencode 'sp=tired' --data-urlencode 'max=10' 'https://api.datamuse.com/words'
+#curl -sG 'https://api.datamuse.com/words?ml=duck&sp=b*&max=5' | jq -c
+# curl -sG 'https://api.datamuse.com/words?ml=duck&sp=b*&max=5' | sed -E 's/\},\{/\n/g' | sed -E 's/\W*"word":"([^"]+)"[^\n]+/\1/g'
+# curl -s https://owlbot.info/api/v2/dictionary/nsdfs
+# echo "$BOAT" | jq -j '.[] | @text "word \(.word) is pronounced like \(.tags[])\n"' | sed -E 's/pron://g'
+
+exit 0
