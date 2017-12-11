@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 
-# Seamus Johnston, 2017-12-03
-# https://seamusjohnston.com
+#########/
+# word curls thesaruses and reverse dictionaries with human-readable queries
+# Copyright (C) 2017  Seamus Johnston https://seamusjohnston.com
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#########\
 
 # Print usage if no args or help asked
 read -r -d '' USAGE << 'EOF'
@@ -44,8 +59,8 @@ esac
 # Vars for creating the curl request
 API="datamuse"
 MAX=10
-PARAMS=("sl" "sp" "rel_jja" "rel_jjb" "rel_syn" "rel_trg" "rel_ant" "rel_spc" "rel_gen" "rel_com" "rel_par" "rel_bga" "rel_bgb" "rel_rhy" "rel_nry" "rel_hom" "rel_cns" "lc" "rc")
-GLOSS=("sounds like" "are spelled like" "are used with the adjective" "are used with the noun" "are synonyms of" "are triggered by" "are antonyms of" "are a more general word for" "are a specific kind of" "are the parts of" "describe things made with" "usually follow" "usually preceed" "are perfect rhymes of" "are approximate rhymes of" "are homophones of" "have the same consonants as" "often follow" "often come before")
+PARAMS=("ml" "sl" "sp" "rel_jja" "rel_jjb" "rel_syn" "rel_trg" "rel_ant" "rel_spc" "rel_gen" "rel_com" "rel_par" "rel_bga" "rel_bgb" "rel_rhy" "rel_nry" "rel_hom" "rel_cns" "lc" "rc")
+GLOSS=("have a meaning like" "sound like" "are spelled like" "are used with the adjective" "are used with the noun" "are synonyms of" "are triggered by" "are antonyms of" "are a more general word for" "are a specific kind of" "are the parts of" "describe things made with" "usually follow" "usually preceed" "are perfect rhymes of" "are approximate rhymes of" "are homophones of" "have the same consonants as" "often follow" "often come before")
 
 # Rhymes is hard to spell
 is_rhymes() {
@@ -69,6 +84,24 @@ is_pronounced() {
     return 1
 }
 
+# Convert to number
+convert_num() {
+    case $1 in
+        one) USER_MAX=1 ;;
+        two) USER_MAX=2 ;;
+        three) USER_MAX=3 ;;
+        four) USER_MAX=4 ;;
+        five) USER_MAX=5 ;;
+        six) USER_MAX=6 ;;
+        seven) USER_MAX=7 ;;
+        eight) USER_MAX=8 ;;
+        nine) USER_MAX=9 ;;
+        ten) USER_MAX=10 ;;
+        *) USER_MAX=$(echo "$1" | sed 's/[^1-9]//')
+    esac
+    echo "user max IS $USER_MAX"
+}
+
 # Deliniate the end of a phrase
 stop_word() {
     stop_words=("and" "no" "meaning" "means" "max" "only")
@@ -81,7 +114,7 @@ stop_word() {
 }
 
 # Deal first with the metadata flags
- case $# in
+case $# in
     2) if [[ $2 =~ defin(ed)|(ition) ]]; then
            sp="$1"; API="owlbot"; shift 2
        elif is_pronounced $2; then
@@ -106,10 +139,12 @@ while [[ $# -gt 0 ]]; do
     if [[ $1 = "no" && $# -gt 1 ]]; then
         shift
         while [[ $1 != "exactly" && $# -gt 0 ]]; do
-            ml+=("$1")
+            ml="${ml:+"$ml "}$1"
             shift
         done
         if [[ $1 = "exactly" ]]; then shift; fi
+
+    # Otherwise, try to find modifier words
 
     elif [[ $1 =~ sound(s)|(ing) && $2 = "like" ]]; then
         # Disambiguate homonyms from spelling variants
@@ -123,9 +158,13 @@ while [[ $# -gt 0 ]]; do
         fi
     elif [[ $1 =~ spell(ed|ing) ]]; then
         if [[ $2 = "like" ]]; then shift; fi
-        echo "$1"
         sp="$2"
         shift 2
+    elif [[ $# -gt 2 && $2 = "with" ]] && is_rhymes $1; then
+        shift 2
+        rel_rhy="$1"
+        shift
+
 
     elif [[ $1 = "comes" && $# -gt 2 ]]; then
         if [[ $2 = "after" ]]; then
@@ -153,7 +192,12 @@ while [[ $# -gt 0 ]]; do
 #        done
 
     # How many results to return max 1000
-
+    elif [[ $1 = "max" ]]; then
+        convert_num $2
+        shift 2
+        if [[ $USER_MAX -gt 1000 ]]; then
+            USER_MAX=1000
+        fi
 
     # Remove filler words if they weren't parsed out above
     elif [[ $1 = "that" || $1 = "which" ]]; then
@@ -163,57 +207,58 @@ while [[ $# -gt 0 ]]; do
     elif [[ $1 = "like" || $1 = "is" ]]; then
         shift
 
-    # Put this near the bottom because it is O(n^2)
-    elif [[ $# -gt 2 && $2 = "with" ]] && is_rhymes $1; then
-        shift 2
-        rel_rhy="$1"
-        shift
-
     # Add anything not otherwise parsable to reverse dictionary query
     else
-        ml+=("$1")
+        ml="${ml:+"$ml "}$1"
         shift
     fi
 done # while [[ $# -gt 0 ]]
 
 # Build the curl request
-CURL_REQ=("curl" "-sG")
-
-if [[ $API = "datamuse" ]]; then
-    if [[ ${#ml[@]} -gt 0 ]]; then
-        CURL_REQ+=(--data-urlencode "'ml=${ml[@]}'")
-        ASKED+=("have a meaning like '${ml[@]}'")
-    fi
+if [[ $API = "datamuse" && $md = "r" ]]; then
+    CURL_REQ="https://api.datamuse.com/words?max=1&sp=${sp}&qe=sp&md=r&ipa=1"
+    ASKED=("You asked for the pronunciation of '${sp}'.")
+elif [[ $API = "datamuse" ]]; then
+    CURL_REQ="https://api.datamuse.com/words?max=${USER_MAX:-"$MAX"}"
     for i in ${!PARAMS[@]}; do
         if [[ -n ${!PARAMS[i]} ]]; then
-            CURL_REQ+=(--data-urlencode "${PARAMS[i]}=${!PARAMS[i]}")
+            CURL_REQ="${CURL_REQ}&${PARAMS[i]}=$(printf %s "${!PARAMS[i]}" | jq -s -R -r @uri)"
             ASKED+=("and ${GLOSS[i]} '${!PARAMS[i]}'")
         fi
     done
-    CURL_REQ+=(--data-urlencode "max=$MAX" "https://api.datamuse.com/words")
+    ASKED="You asked for words which $(echo "${ASKED[@]}" | sed -E 's/^and //')."
 elif [[ $API = "owlbot" ]]; then
-    CURL_REQ="https://owlbot.info/api/v2/dictionary/$(echo "$sp" | sed -E 's/[^a-Z-]*//g')"
+    CURL_REQ="https://owlbot.info/api/v2/dictionary/$(echo "$sp" | sed -E "s/[^a-Z'-]*//g")"
+    ASKED=("You asked for the definition of '${sp}'.")
 fi
 
 # Plain english description of our query
 if [[ $VERBOSE -gt 0 ]]; then
-    ASKED="You asked for words which $(echo "${ASKED[@]}" | sed -E 's/^and //')."
-    echo "$ASKED"
+    printf "%s\n" "$ASKED"
 fi
 
 # What we are going to ask the remote server
 if [[ $VERBOSE -gt 1 ]]; then
-    echo "I ran ${CURL_REQ[@]}"
+    printf "%s\n" "I ran curl -sG \"${CURL_REQ}\""
 fi
 
-# "${CURL_REQ[@]}" | jq
+# Ask and parse return values
+CURL_RES=$(curl -sG "$CURL_REQ")
 
+if [[ $md = "r" ]]; then
+    echo $CURL_RES | jq -j '.[] | @text "datamuse says word \(.word) is pronounced like \(.tags[1]) (\(.tags[2])) \n"' | sed -E 's/[_]*pron:/ /g'
+elif [[ $API = "owlbot" ]]; then
+    printf "owlbot says word $sp "
+    echo $CURL_RES | jq -j '.[] | @text "means \(.definition)\nexample: \(.example)\n"'
+else
+    PLAIN_TEXT=$(printf %s "$CURL_RES"  | jq -j '.[] | @text "\(.word)\t\(.tags // [])\n"')
+    IFS=$'\n\t'
+        printf "%14s %20s %14s %20s\n" $PLAIN_TEXT
+    unset IFS
+fi
 
-
-#curl -sG --data-urlencode 'sp=tired' --data-urlencode 'max=10' 'https://api.datamuse.com/words'
-#curl -sG 'https://api.datamuse.com/words?ml=duck&sp=b*&max=5' | jq -c
-# curl -sG 'https://api.datamuse.com/words?ml=duck&sp=b*&max=5' | sed -E 's/\},\{/\n/g' | sed -E 's/\W*"word":"([^"]+)"[^\n]+/\1/g'
-# curl -s https://owlbot.info/api/v2/dictionary/nsdfs
-# echo "$BOAT" | jq -j '.[] | @text "word \(.word) is pronounced like \(.tags[])\n"' | sed -E 's/pron://g'
+if [[ $VERBOSE -gt 2 ]]; then
+    echo $CURL_RES | jq -c
+fi
 
 exit 0
