@@ -23,6 +23,8 @@ read -r -d '' USAGE << 'EOF'
 Usage: word [options] [primary modifiers] <word|phrase> \
        [primary|secondary modifiers <word|phrase|number>]
 
+Commandline interface to Datamuse and Owlbot APIs
+
     -v[vv]                           Verbose modes.
     -h, --help                       Print this help.
 
@@ -43,9 +45,10 @@ Secondary modifiers:
    about            "word meaning refuse about trash"   (max is 5 nouns)
                     "word meaning refuse about negotiation contracts"
 
-Word tries to guess your intent from human readable language.
-If it messes up, use quotes. Also, read <<CONTRIBUTING.md>> and open an issue,
-so I* can fix it for the next person. :)                *Seamus Johnston
+word tries to guess your intent. If it messes up, use quotes.
+Optionally, read <<CONTRIBUTING.md>> and open an issue,
+so I can fix it for the next person.
+
 EOF
 if [[ $# -eq 0 || $1 =~ (--help)|(-h) ]]; then echo "$USAGE"; exit 1; fi
 
@@ -54,13 +57,14 @@ case $1 in
     -v)   VERBOSE=1 ; shift ;;
     -vv)  VERBOSE=2 ; shift ;;
     -vvv) VERBOSE=3 ; shift ;;
+    -x)   DRY_RUN=1 ; VERBOSE=2 ; shift ;;
 esac
 
 # Vars for creating the curl request
 API="datamuse"
-MAX=10
-PARAMS=("ml" "sl" "sp" "rel_jja" "rel_jjb" "rel_syn" "rel_trg" "rel_ant" "rel_spc" "rel_gen" "rel_com" "rel_par" "rel_bga" "rel_bgb" "rel_rhy" "rel_nry" "rel_hom" "rel_cns" "lc" "rc")
-GLOSS=("have a meaning like" "sound like" "are spelled like" "are used with the adjective" "are used with the noun" "are synonyms of" "are triggered by" "are antonyms of" "are a more general word for" "are a specific kind of" "are the parts of" "describe things made with" "usually follow" "usually preceed" "are perfect rhymes of" "are approximate rhymes of" "are homophones of" "have the same consonants as" "often follow" "often come before")
+MAX=20
+PARAMS=("ml" "sl" "sp" "rel_jja" "rel_jjb" "rel_syn" "rel_trg" "rel_ant" "rel_spc" "rel_gen" "rel_com" "rel_par" "rel_bga" "rel_bgb" "rel_rhy" "rel_nry" "rel_hom" "rel_cns" "lc" "rc" "topics")
+GLOSS=("have a meaning like" "sound like" "are spelled like" "are used with the adjective" "are used with the noun" "are synonyms of" "are triggered by" "are antonyms of" "are a more general word for" "are a specific kind of" "are the parts of" "describe things made with" "usually follow" "usually preceed" "are perfect rhymes of" "are approximate rhymes of" "are homophones of" "have the same consonants as" "often follow" "often come before" "are about")
 
 # Rhymes is hard to spell
 is_rhymes() {
@@ -97,14 +101,13 @@ convert_num() {
         eight) USER_MAX=8 ;;
         nine) USER_MAX=9 ;;
         ten) USER_MAX=10 ;;
-        *) USER_MAX=$(echo "$1" | sed 's/[^1-9]//')
+        *) USER_MAX=$(echo "$1" | sed 's/[^0-9]//')
     esac
-    echo "user max IS $USER_MAX"
 }
 
 # Deliniate the end of a phrase
 stop_word() {
-    stop_words=("and" "no" "meaning" "means" "max" "only")
+    stop_words=("and" "no" "meaning" "means" "max" "about")
     for s in ${stop_words[@]}; do
         if [[ $1 = $s ]]; then
             return 0
@@ -180,19 +183,23 @@ while [[ $# -gt 0 ]]; do
         rc="$2"
         shift 2
 
-#    elif [[ $1 = "means" || $1 = "meaning" || $1 = "like" ]]; then
-#        shift
+    elif [[ $1 = "means" || $1 = "meaning" || $1 = "like" ]]; then
+        shift
+        while [[ $# -gt 0 ]] && ! stop_word $1; do
+            ml="${ml:+"$ml "}$1"
+            shift
+        done
 
     # Discover the topic of our query
-#    elif [[ $1 = "about" ]]; then
-#        shift
-#        i=5
-#        while [[ $# -gt 0 && $i -gt 0 ]] && ! stop_word $1; do
-#            
-#        done
+    elif [[ $1 = "about" ]]; then
+        shift
+        while [[ $# -gt 0 ]] && ! stop_word $1; do
+            topics="${topics:+"$topics,"}$1"
+            shift
+        done
 
     # How many results to return max 1000
-    elif [[ $1 = "max" ]]; then
+    elif [[ $1 = "max" || $1 = "maximum" || $1 = "only" ]]; then
         convert_num $2
         shift 2
         if [[ $USER_MAX -gt 1000 ]]; then
@@ -220,13 +227,14 @@ if [[ $API = "datamuse" && $md = "r" ]]; then
     ASKED=("You asked for the pronunciation of '${sp}'.")
 elif [[ $API = "datamuse" ]]; then
     CURL_REQ="https://api.datamuse.com/words?max=${USER_MAX:-"$MAX"}"
+    # For each paramater, if it is defined, uri encode it and add it to the query string
     for i in ${!PARAMS[@]}; do
         if [[ -n ${!PARAMS[i]} ]]; then
             CURL_REQ="${CURL_REQ}&${PARAMS[i]}=$(printf %s "${!PARAMS[i]}" | jq -s -R -r @uri)"
             ASKED+=("and ${GLOSS[i]} '${!PARAMS[i]}'")
         fi
     done
-    ASKED="You asked for words which $(echo "${ASKED[@]}" | sed -E 's/^and //')."
+    ASKED="You asked for words which $(echo "${ASKED[@]}" | sed -E 's/^and //')${USER_MAX:+", max $USER_MAX results"}."
 elif [[ $API = "owlbot" ]]; then
     CURL_REQ="https://owlbot.info/api/v2/dictionary/$(echo "$sp" | sed -E "s/[^a-Z'-]*//g")"
     ASKED=("You asked for the definition of '${sp}'.")
@@ -242,23 +250,45 @@ if [[ $VERBOSE -gt 1 ]]; then
     printf "%s\n" "I ran curl -sG \"${CURL_REQ}\""
 fi
 
-# Ask and parse return values
-CURL_RES=$(curl -sG "$CURL_REQ")
-
-if [[ $md = "r" ]]; then
-    echo $CURL_RES | jq -j '.[] | @text "datamuse says word \(.word) is pronounced like \(.tags[1]) (\(.tags[2])) \n"' | sed -E 's/[_]*pron:/ /g'
-elif [[ $API = "owlbot" ]]; then
-    printf "owlbot says word $sp "
-    echo $CURL_RES | jq -j '.[] | @text "means \(.definition)\nexample: \(.example)\n"'
-else
-    PLAIN_TEXT=$(printf %s "$CURL_RES"  | jq -j '.[] | @text "\(.word)\t\(.tags // [])\n"')
-    IFS=$'\n\t'
-        printf "%14s %20s %14s %20s\n" $PLAIN_TEXT
-    unset IFS
-fi
-
-if [[ $VERBOSE -gt 2 ]]; then
-    echo $CURL_RES | jq -c
+if [[ ! $DRY_RUN ]]; then
+    # Ask away! (with a tiny bit of error handling)
+    CURL_RES=$(curl -m 15 -sG "$CURL_REQ")
+    if [[ $? -ne 0 ]]; then
+        printf "\033[0;36mUnable to reach API.\033[0m Check your internet connection or try again with more feeling.\n"
+        exit 1
+    elif [[ $CURL_RES = "[]" ]]; then
+        if hash fortune 2>/dev/null; then
+            printf "\033[0;36mNo results found!\033[0m Have a fortune cookie:\n"
+            fortune -s
+        else
+            printf "\033[0;36mNo results found!\033[0m Try a paper dictionary instead?\n"
+        fi
+        exit 1
+    fi
+    
+    # Parse and display return values
+    if [[ $md = "r" ]]; then
+        printf "\033[0;36mdatamuse\033[0m says word \033[0;32m$sp\033[0m "
+        echo $CURL_RES | jq -j '.[] | @text "is pronounced like\(.tags[1]) (\(.tags[2])) \n"' | sed -E 's/[_]*pron:/ /g'
+    elif [[ $API = "owlbot" ]]; then
+        printf "\033[0;36mowlbot\033[0m says word \033[0;32m$sp\033[0m "
+        echo $CURL_RES | jq -j '.[] | @text "means \(.definition)\nexample: \(.example)\n"'
+    elif [[ -n $ml ]]; then
+        printf "                                  \033[0;36mdatamuse thinks these words may help!\033[0m\n"
+        PLAIN_TEXT=$(printf %s "$CURL_RES"  | jq -j '.[] | @text "\(.word)\t\(.tags // [])\n"')
+        IFS=$'\n\t'
+            printf "\033[0;32m%14s\033[0m %20s \033[0;32m%14s\033[0m %20s\n" $PLAIN_TEXT
+        unset IFS
+    else
+        printf "                                  \033[0;36mdatamuse thinks these words may help!\033[0m\n"
+        PLAIN_TEXT=$(printf %s "$CURL_RES"  | jq -j '.[] | @text "\(.word) "')
+        printf "\033[0;32m%14s\033[0m \033[0;32m%14s\033[0m \033[0;32m%14s\033[0m \033[0;32m%14s\033[0m\n" $PLAIN_TEXT
+    fi
+    
+    # The raw return JSON, passed through jq for highlighting
+    if [[ $VERBOSE -gt 2 ]]; then
+        echo $CURL_RES | jq -c
+    fi
 fi
 
 exit 0
