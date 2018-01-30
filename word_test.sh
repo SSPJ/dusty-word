@@ -93,7 +93,7 @@
   [ "${lines[1]}" = 'I ran curl -sG "https://api.datamuse.com/words?max=20&rel_rhy=cute&lc=leather"' ]
 }
 @test "'definition of' should use owlbot" {
-  run word -x defintion of nostrum
+  run word -x definition of nostrum
   [ "$status" -eq 0 ]
   [ "${lines[1]}" = 'I ran curl -sG "https://owlbot.info/api/v2/dictionary/nostrum"' ]
 }
