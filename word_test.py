@@ -2,6 +2,24 @@
 
 # GPLv3 Copyright (C) 2018 Seamus Johnston https://seamusjohnston.com
 
+# What the heck is this file? :D
+# When writing short programs, you can test if they work
+# by running them.
+# When writing longer programs (more than 100 lines?)
+# that gets very tiring.
+# There are simply too many different things you could do
+# to test them all.
+# This file uses the pytest library to test my program with
+# a bunch of different inputs.
+# Not only is it easier than testing by hand, it is a good idea
+# to run tests before executing "risky" code.
+# You don't want to discover that you have a bug which deletes cells
+# after you run it on your important spreadsheet!!
+
+# you can run these tests by installing pytest (python -m pip pytest)
+# then running python -m pytest word_test.py
+# make sure you are in the same folder as the tests :)
+
 import pytest, requests, re
 import word
 
@@ -18,29 +36,32 @@ import word
 
 class TestWord(object):
 
+  # this sets some defaults for all the tests
   @pytest.fixture(scope="function", autouse=True)
   def globalvars(self,monkeypatch):
     word.verbose = 0
     word.query_type = None
+    # whenever requests.get() is called in the code, run TestWord.mockget() instead
     monkeypatch.setattr(requests, 'get', TestWord.mockget)
 
-  @staticmethod
+  # this creates a "fake" http response without accessing the internet
+  # it makes the tests faster and also doesn't waste bandwidth
   def mockget(*args,**kwargs):
-    if "accessed" in locals():
-      return response
-    else:
-      accessed = True
-      response = requests.Response()
-      response.request = requests.Request('GET',*args,**kwargs).prepare()
-      response.url = response.request.url
-      return response
+    response = requests.Response()
+    response.request = requests.Request('GET',*args,**kwargs).prepare()
+    response.url = response.request.url
+    return response
+
+  # Tests start HERE \o/
 
   def test_simple_query_should_encode_correctly(self):
     args = ['platypus']
     query = word.parse(args, {})
     responses = word.go_fetch(query)
+    # for each test, we just "assert" that something should be true
     assert re.search(r'max=20',responses[0].url)
     assert re.search(r'ml=platypus',responses[0].url)
+    # if it's not, the test fails
 
   def test_multiple_words_should_encode_correctly(self):
     args = ['elephant', 'trunk']

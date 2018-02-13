@@ -18,6 +18,14 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #########\
 
+# NB: this program was written, in part, to help a friend who is learning
+# to code. For that reason, it has comments out the wazoo.
+
+# HOW TO READ THIS FILE
+# like many programs, it starts executing from near the bottom
+# skip to line 684-ish if you want to see what code runs first
+# from here down to there are a bunch of variables and functions
+
 # get code from other libraries that we'll need
 import sys, re, requests
 from subprocess import call
@@ -26,7 +34,7 @@ from colorama import init as colorama_init
 # sys(tem) is a library for interacting with the computer "outside" the program
 # requests is an HTTP library for talking to websites on the internet
 # subprocess is a library for running other programs (any programs, not just python)
-# colorama is a library for displaying ANCI escape codes correctly on Windows
+# colorama is a library for displaying ANSI escape codes correctly on Windows
 # notice that in some cases we import the entire library (import _libraryname_)
 # and in others we import only a function or two (from _libraryname_ import _function_)
 # in colorama we even rename the function (because init() is too vague, imo)
@@ -461,26 +469,42 @@ def print_response(responses):
   """ Turn JSON formatted responses into nice printable output. """
   connection_error, empty_results = False, False
 
+  # the "global" keyword tells python that these variables are defined
+  # *outside* our print_response() function
   global query_type
   global verbose
+  # you should mostly avoid global variables, but they are sometimes handy
 
+  # First, check if we have gotten any errors when connecting to the api
+  # enumerate() returns each item in a list along with the item's index
   for index, response in enumerate(responses):
+    # an http status code is a number sent from the web server
+    # everyone knows the dreaded "404" (not found)
+    # there is also 200 (ok), 503 (service unavailable), 418 (i'm a teapot -- not joking!)
+    # and dozens of others
     if response.status_code != requests.codes.OK:
       connection_error = True
       del responses[index]
+    # we also check if the response is empty
+    # (that means the api found no words matching our query)
     elif response.json() == []:
       empty_results = True
       del responses[index]
 
+  # this is because Windows doesn't understand ANSI color codes >:(
+  # e.g. \033[0;36m means "turn the text after me blue" -- but windows is like "??"
+  # so the colorama library translates the ANSI codes
   colorama_init()
 
   if responses == [] and connection_error == True:
     print("\033[0;36mUnable to reach API.\033[0m Check your internet connection or try again with more feeling.")
     sys.exit(1)
   elif responses == [] and empty_results == True:
+    # if the user has the BSD 'fortune' program installed, use it
     try:
       fortune = call(['fortune','-s'])
     except FileNotFoundError:
+      # otherwise, get a fortune from the web
       fortune = fortune_cookie()
     if fortune:
       print("\033[0;36mNo results found!\033[0m Have a fortune cookie:")
@@ -489,38 +513,98 @@ def print_response(responses):
       print("\033[0;36mNo results found!\033[0m Try a paper dictionary instead?")
     sys.exit(1)
 
+  # quick note about JSON before we dive in further
+  # json is a method of representing abitrarily complex objects
+  # it comes from javascript (JavaScript Object Notation)
+  # like most js stuff it is excellently useful and a touch unholy
+  # together with xml, yaml, and cvs, it is the commonest way of
+  # making text data machine-readable
+  # to help you understand, here are some examples of json objects
+  #
+  # [ {'type': 'noun', 'definition': 'available money; cash.', 'example': None},
+  #   {'type': 'adjective', 'definition': 'willing or eager to do something.',
+  #    'example': 'she is ready to die for her political convictions'} ]
+  # a list containing two dictionaries
+  # each dictionary contains keys of 'type', 'definition', and 'example'
+  #
+  # [ {'word': 'ready', 'score': 2147483647, 'tags': ['query'],
+  #    'defs': ['n\tpoised for action', 'v\tprepare for eating by applying heat'] } ]
+  # a list containing one dictionary with keys 'word','score','tags', and 'defs'
+  # notice that the value of 'tags' and 'defs' are both lists!
+  #
+  # [ {'word': 'devil', 'score': 2147483647,
+  #    'tags': ['query', 'pron:D EH1 V AH0 L ', 'ipa_pron:dˈɛvʌɫ'] } ]
+  # a list containing one dictionary with keys 'word', 'score', and 'tags'
+  #
+  # [ {'word': 'coleslaw', 'score': 26424, 'tags': ['n']},
+  #   {'word': 'dressing', 'score': 26424, 'tags': ['n']},
+  #   {'word': 'greens', 'score': 26424, 'tags': ['n'] } ]
+  # you can read this one by yourself :)
+
   if query_type == "DEF":
     for response in responses:
       # print out helpful info if the user asked for it
       if verbose > 1: print(response.url)     # What we asked the remote server
       if verbose > 2: print(response.text)    # The raw return JSON
+      # check if this is the datamuse API or the owlbot API
       if re.search(r'datamuse',response.url):
         api = "datamuse"
+        # the json() function turns the raw response (bytes of data)
+        # into python lists, dictionaries, etc (like demonstrated above)
+        # we take the first item in the list [0] because a dictionary query
+        # only has one entry (the word and its definition)
         payload = response.json()[0]
         word = payload["word"]
+        # since 'defs' is a list, let's join it together into a string for printing
         definition = '\n'.join(payload['defs'])
         lines = []
         for entry in payload['defs']:
+          # get the word type and its definition out of the string
+          # yes, you can have two (or more!) return values from a function in python
+          # groups() returns a tuple of all the capture groups in the regex (see below)
+          # notice that _def not def (b/c def is a keyword)
           type,_def = re.match(r'([^\\]*)\t(.*)',entry).groups()
+          # put the type and def back into a string :)
+          # ljust(11) is left justify by 11 spaces (neat formatted columns!)
           line = f"{type.ljust(11)} {_def}"
+          # put that line into a list
           lines.append(line)
+          # go back up and get another ^
+        # now join all the lines together with a new line character (\n) between them
         definition = '\n'.join(lines)
+        # regex explained: ([^\\]*)\t(.*)
+        # () capturing group -- what we find in here, we keep, lol
+        # [] character set -- match any of the characters in here
+        # [^ ] negation -- do not match any of the characters in here
+        # \\ *one* literal backslash -- b/c \ is special in regex \\ means \
+        # * the previous thing, zero or more times
+        # \t literal tab character
+        # . any character at all ever -- even ones you weren't thinking about when you typed it :D
+        # all together: anything which is not a \, followed by a \t, followed by anything
+        # capture the first bit (type), forget the \t, caputre the second bit (_def)
       else:
         api = "owlbot"
         payload = response.json()
         word = re.search(r'dictionary/(.*)$',response.url).groups()[0]
+        # regex explained: $ means "end of the line"
+        # it's not a character like \n or \r
+        # it is an anchor (^ means "start of the line")
         lines = []
         for entry in payload:
           line = f"{entry['type'].ljust(11)} {entry['definition']}"
+          # ' ' * 12 means insert 12 spaces
           if entry['example']: line += f"\n{' ' * 12}Example:{entry['example']}"
           lines.append(line)
         definition = '\n'.join(lines)
+      # lots of work, but now we print it! \o/
       print(f"\033[0;36m{api}\033[0m says word \033[0;32m{word}\033[0m means")
       print(definition)
   if query_type == "PRO":
     # print out helpful info if the user asked for it
     if verbose > 1: print("The answer came from: ",responses[0].url)
     if verbose > 2: print("The raw JSON response was: ",responses[0].text)
+    # no for loop and only one response (responses[0])
+    # (b/c we use only one API for everything except dictionary lookups)
     payload = responses[0].json()[0]
     word = payload["word"]
     for tag in payload['tags']:
@@ -535,14 +619,68 @@ def print_response(responses):
     if verbose > 1: print("The answer came from: ",responses[0].url)
     if verbose > 2: print("The raw JSON response was: ",responses[0].text)
     payload = responses[0].json()
+    # this will be fun to explain but. . .
+    # 1. go through each entry. if it has tags (a list), turn the list into a string
     for entry in payload:
       entry['tags'] = ', '.join(entry['tags']) if 'tags' in entry else ''
+    # 2. create a function which takes one argument (entry -- a dictionary)
+    #    and returns a formatted string with justification and coloring
     fentry = lambda entry: (f"\033[0;32m{entry['word'].rjust(13)}\033[0m "
-                            f"\033[0;36m{str(entry['tags']).rjust(13)}\033[0m ")
+                            f"\033[0;36m{entry['tags'].rjust(13)}\033[0m ")
+    # 3. for each entry in the payload list, run fentry(entry)*
+    #    (all the entries are now formatted as strings)
     entries = list(map(fentry, payload))
+    # 4. starting at 0, go up to len(entries)-1 in steps of 3 (0,3,6,9. . .)
+    #    for each step *i*, take a slice of entries from i to i+3
+    #    join them together
+    #    this creates a single string containing three list entries
+    #    store all the strings in a list in the variable lines
     lines = (''.join(entries[i:i+3]) for i in range(0,len(entries),3))
     print("\033[0;36mdatamuse thinks these words may help!\033[0m".rjust(94))
+    # 5. join the lines together with \n in between each
     print('\n'.join(lines))
+
+    # * extra note here about map()
+    # since you are interested in data stuff :3
+    # there's two very common data operations
+    # one is "for every datum, do something to it"
+    # another is "keep some data, get rid of others"
+    # the first is usually called map
+    # the second is called filter
+    # python has functions for both of them (helpfully called map() and fliter(), tada!)
+    # both take two arguments: a function and a list (or tuple or dictionary)
+    # eg. filter(my_function,my_list)
+    # with map, the function should take one argument, transform it, and return it
+    # eg. def my_function(x):
+    #         return x + 3
+    # (or my_function = lambda x: x + 3)
+    # that function adds three but you can do any kind of (very complex) transforms
+    # with filter, the function should take one argument, return true if it should be kept,
+    # or false if not
+    # eg. def my_function(x):
+    #         if x > 34.99: return True
+    #         else: return False
+    # (or my_function = lambda x: True if x > 34.99 else False )
+    #
+    # the tricky bit is that neither map() or filter() return your data (huh?)
+    # they return iterators
+    # what's an iterator, sam?
+    # an iterator is like a soda vending machine
+    # it has all the cans of pop inside,
+    # but you stick your quarters in and get them out one by one
+    # for example:
+    # >>> lst = [1,2,3,4,5]
+    # >>> map(lambda x: x + 3, lst)
+    # <map object at 0x7f1c78673b38>   <-- this is the iterator
+    # . . . and here's the loop that "iterates" over it:
+    # >>> for item_plus_three in map(lambda x: x + 3, lst):
+    # ...   print(item_plus_three)
+    # ... 
+    # 4
+    # 5
+    # 6
+    # 7
+    # 8
 
 #
 #### END HELPER FUNCTIONS
